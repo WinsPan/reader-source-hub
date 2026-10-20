@@ -2,10 +2,9 @@ name = "reader-source-hub"
 main = "src/index.js"
 compatibility_date = "2026-09-01"
 
-# 先运行 npx wrangler kv namespace create STORE，把输出的 id 填到下面
+# 自定义域名（workers.dev 在大陆访问不稳定）
+routes = [{ pattern = "reader.15587117.xyz", custom_domain = true }]
+
 [[kv_namespaces]]
 binding = "STORE"
-id = "REPLACE_WITH_KV_NAMESPACE_ID"
-
-# 绑定自定义域名后取消注释（workers.dev 在大陆访问不稳定）
-# routes = [{ pattern = "books.example.com", custom_domain = true }]
+id = "402b05b07cc04d0ba096669067cfd839"
