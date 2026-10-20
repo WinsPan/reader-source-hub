@@ -1,0 +1,38 @@
+name: daily-check
+
+on:
+  schedule:
+    - cron: '0 19 * * *'   # 北京时间 03:00
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daily-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --omit=dev
+      - name: 取上一版
+        run: node checker/fetch-prev.mjs prev
+        env:
+          HUB_URL: ${{ secrets.HUB_URL }}
+          READ_TOKEN: ${{ secrets.READ_TOKEN }}
+      # 检测步骤不注入任何密钥；日志只输出统计数字
+      - name: 检测
+        run: node checker/main.mjs --out dist --prev prev --budget-min 50
+      - name: 发布
+        run: node checker/publish.mjs dist
+        env:
+          HUB_URL: ${{ secrets.HUB_URL }}
+          UPLOAD_TOKEN: ${{ secrets.UPLOAD_TOKEN }}

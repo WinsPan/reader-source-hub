@@ -1,0 +1,19 @@
+{
+  "name": "reader-source-hub",
+  "private": true,
+  "type": "module",
+  "license": "GPL-3.0-only",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "sync-engine": "node scripts/sync-engine.mjs",
+    "check": "node checker/main.mjs",
+    "test": "node --test test/"
+  },
+  "dependencies": {
+    "quickjs-emscripten": "0.32.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "wrangler": "4.147.0"
+  }
+}
