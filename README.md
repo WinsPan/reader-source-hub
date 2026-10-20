@@ -31,7 +31,7 @@ Cloudflare Worker + KV  ◀─────────────────�
    npx wrangler deploy
    ```
 5. **自定义域名（建议）：** `workers.dev` 在大陆访问不稳定。取消 `wrangler.toml` 里 `routes` 的注释后重新部署。
-6. 在本仓库 Settings → Secrets → Actions 添加 `HUB_URL`（Worker 地址）、`READ_TOKEN`、`UPLOAD_TOKEN`。
+6. 在本仓库 Settings → Secrets → Actions 添加 `HUB_URL`、`READ_TOKEN`、`UPLOAD_TOKEN`。`HUB_URL` 用 `workers.dev` 地址：自定义域名受该域名的 Cloudflare 安全防护（如 Bot Fight Mode）影响，会给 GitHub 的数据中心 IP 返回人机验证（`cf-mitigated: challenge`）；手机订阅仍用自定义域名。
 7. 在 Actions 页面手动运行一次（daily-check → Run workflow）。
 8. 客户端：书源管理 → 右上角菜单 → 书源订阅，添加 `https://<域名>/s/<READ_TOKEN>/sources.json`。
 

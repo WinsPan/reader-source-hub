@@ -2,8 +2,11 @@ name = "reader-source-hub"
 main = "src/index.js"
 compatibility_date = "2026-09-01"
 
-# 自定义域名（workers.dev 在大陆访问不稳定）
+# 自定义域名给手机订阅用（workers.dev 在大陆访问不稳定）
 routes = [{ pattern = "reader.15587117.xyz", custom_domain = true }]
+# workers.dev 给 GitHub Actions 用：自定义域名受该域名的 Cloudflare 安全防护影响，会对数据中心 IP 发人机验证
+workers_dev = true
+preview_urls = false
 
 [[kv_namespaces]]
 binding = "STORE"
