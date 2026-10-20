@@ -15,7 +15,7 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 220
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -30,7 +30,7 @@ jobs:
           READ_TOKEN: ${{ secrets.READ_TOKEN }}
       # 检测步骤不注入任何密钥；日志只输出统计数字
       - name: 检测
-        run: node checker/main.mjs --out dist --prev prev --budget-min 180
+        run: node checker/main.mjs --out dist --prev prev --budget-min 10
       - name: 发布
         run: node checker/publish.mjs dist
         env:
