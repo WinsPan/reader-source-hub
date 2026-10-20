@@ -193,7 +193,9 @@ for (let page = 1; page <= PAGES && Date.now() < DEADLINE; page++) {
 const now = Date.now()
 const selected = selectSources(results, { target: TARGET, brands: E.BRANDS, history, prevUrls })
 // 精选在前（排序号小）；换源池只用于搜索与换源，关闭发现（enabledExplore / showExplore），发现页只显示精选
+// 补齐开源阅读书源的非空字段默认值：部分客户端写库时缺失这些字段会失败
 const sources = selected.map((r, i) => ({
+  bookSourceType: 0, bookSourceGrade: 2, respondTime: 180000, weight: 0, enabled: true,
   ...r.source, customOrder: i, enabledExplore: r.tier === 'featured', showExplore: r.tier === 'featured'
 }))
 const tiers = { featured: selected.filter((r) => r.tier === 'featured').map((r) => r.source.bookSourceName),
