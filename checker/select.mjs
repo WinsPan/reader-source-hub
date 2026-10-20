@@ -63,7 +63,7 @@ export function selectSources(results, { target, brands, history, prevUrls }) {
   const urls = new Set()
   const names = new Set()
   const taken = (r) => urls.has(r.source.bookSourceUrl) || hosts.has(hostOf(r.source.bookSourceUrl)) ||
-    (!!r.fingerprint && prints.has(r.fingerprint)) || names.has(nameKey(r.source))
+    (!!r.fingerprint && prints.has(r.fingerprint)) || (!!nameKey(r.source) && names.has(nameKey(r.source)))
   const pick = (r, tier) => {
     if (taken(r) || picked.length >= target) {
       return false
