@@ -31,6 +31,11 @@ export function scoreOf(r, history, prevUrls) {
 // 成人 / 同人向书源不入选（按书源名称与分组判断）
 const EXCLUDED = /🔞|肉|腐|耽美|同人|成人|18禁|情色|黄文|里番|海棠|BL|GL|百合|NTR/i
 
+/** 书源名去掉表情、符号和空白后用于去重（同一站点换了域名常同名） */
+export function nameKey(source) {
+  return `${source?.bookSourceName ?? ''}`.replace(/[\p{Extended_Pictographic}\p{P}\p{S}\s]/gu, '').toLowerCase()
+}
+
 export function excludedSource(source) {
   return EXCLUDED.test(`${source?.bookSourceName ?? ''} ${source?.bookSourceGroup ?? ''}`)
 }
@@ -46,7 +51,7 @@ export function recentlyFailed(history, url, now) {
  *  1. 精选（featured）：发现、搜索、阅读全都可用的前 FEATURED_COUNT 个，品牌优先 —— 用于发现页浏览；
  *  2. 换源池（pool）：只要求搜索与阅读，按搜书覆盖面等得分补足到 target —— 用于搜书与阅读时换源。
  * 七猫 / 番茄 / 猫眼各保留 BRAND_QUOTA 个（有发现页的进精选）；
- * 同书源地址、同站、正文指纹相同（同一后端的镜像站）只留一个；成人 / 同人向不入选
+ * 同书源地址、同站、同名（同一站点的不同域名）、正文指纹相同（同一后端的镜像站）只留一个；成人 / 同人向不入选
  * @param results [{ source, ok, explore, latestOk, flaky, fingerprint, coverage, ms, brand }]
  */
 export function selectSources(results, { target, brands, history, prevUrls }) {
@@ -56,14 +61,16 @@ export function selectSources(results, { target, brands, history, prevUrls }) {
   const hosts = new Set()
   const prints = new Set()
   const urls = new Set()
+  const names = new Set()
   const taken = (r) => urls.has(r.source.bookSourceUrl) || hosts.has(hostOf(r.source.bookSourceUrl)) ||
-    (!!r.fingerprint && prints.has(r.fingerprint))
+    (!!r.fingerprint && prints.has(r.fingerprint)) || names.has(nameKey(r.source))
   const pick = (r, tier) => {
     if (taken(r) || picked.length >= target) {
       return false
     }
     urls.add(r.source.bookSourceUrl)
     hosts.add(hostOf(r.source.bookSourceUrl))
+    names.add(nameKey(r.source))
     if (r.fingerprint) {
       prints.add(r.fingerprint)
     }

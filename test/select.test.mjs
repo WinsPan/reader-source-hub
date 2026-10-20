@@ -116,3 +116,10 @@ test('同一书源地址的多个版本只留得分最高的', () => {
     { target: 10, brands: ['七猫'], history: {}, prevUrls: new Set() })
   assert.deepEqual(picked.map((p) => p.source.bookSourceName), ['快版'])
 })
+
+test('同名书源（同站不同域名）只留一个', () => {
+  const r = (url, name, ms) => ({ source: { bookSourceUrl: url, bookSourceName: name }, ok: true, explore: false, latestOk: true, ms, brand: '' })
+  const picked = selectSources([r('https://ixdzs8.com', '爱下电子书', 3000), r('https://ixdzs.tw/', '📖 爱下电子书', 1000), r('https://x.com', '别的', 2000)],
+    { target: 10, brands: [], history: {}, prevUrls: new Set() })
+  assert.deepEqual(picked.map((p) => p.source.bookSourceUrl).sort(), ['https://ixdzs.tw/', 'https://x.com'])
+})
