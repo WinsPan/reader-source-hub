@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 const dir = process.argv[2] ?? 'dist'
+const UA = 'reader-source-hub/1.0 (+https://github.com/WinsPan/reader-source-hub)'
 const { HUB_URL, UPLOAD_TOKEN } = process.env
 if (!HUB_URL || !UPLOAD_TOKEN) {
   throw new Error('缺少 HUB_URL / UPLOAD_TOKEN')
@@ -12,10 +13,11 @@ const read = (f) => JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'))
 const post = async (endpoint, body) => {
   const res = await fetch(`${HUB_URL.replace(/\/$/, '')}/admin/${endpoint}`, {
     method: 'POST',
-    headers: { authorization: `Bearer ${UPLOAD_TOKEN}`, 'content-type': 'application/json' },
+    headers: { authorization: `Bearer ${UPLOAD_TOKEN}`, 'content-type': 'application/json', 'user-agent': UA },
     body: JSON.stringify(body)
   })
   if (!res.ok) {
+    console.log(`server=${res.headers.get('server')} cf-mitigated=${res.headers.get('cf-mitigated')} cf-ray=${res.headers.get('cf-ray')}`)
     throw new Error(`${endpoint} 失败：HTTP ${res.status}`)
   }
   return res.json()
