@@ -1,14 +1,18 @@
 // 严格检测：比客户端的检测（一个关键词、只读第一章、正文 ≥30 字）更接近真实阅读
-//  1. 搜索相关性：书源自带的检测词 → 发现页里的书名 → 几部热门长篇，搜索结果须有书名匹配的书
+//  1. 搜索相关性：书源自带的检测词 → 发现页里的书名 → 通用词「重生」→ 几部热门长篇，搜索结果须有书名匹配的书
+//     （平台书源如七猫、番茄没有起点作品，只用热门长篇会误判为搜索失败）
 //  2. 目录：至少 10 章，章节地址 / 标题不能大量重复
 //  3. 正文抽样：第一章、中间章、最新章；检查字数、乱码、字体混淆、锁章 / 登录墙 / 反爬页、中文比例，各章内容须互不相同
 //  4. 发现：任一分类能列出至少 3 本书
-//  5. 失败后隔几秒复检一次，第二次才通过的记为不稳定
+//  0. 预检：书源首页 8 秒内连不上（DNS、拒绝连接、超时）直接判失效，不再逐项等待超时
+//  5. 网络类失败（超时、连接错误）隔几秒复检一次，第二次才通过的记为不稳定；规则类失败不复检
 import { contentFingerprint, contentProblem, distinctContents, relevantHit, tocProblem } from './quality.mjs'
 
-const PROBES = ['诡秘之主', '斗破苍穹', '凡人修仙传', '剑来', '大奉打更人']
+// 通用词放在热门长篇之前：任何书库都有书名含「重生」的书
+const PROBES = ['重生', '诡秘之主', '斗破苍穹', '凡人修仙传', '剑来']
 const CHECK_TIMEOUT = 120000
 const RETRY_DELAY = 3000
+const NETWORK_ERROR = /超时|timeout|timed out|fetch failed|ECONN|ENOTFOUND|EAI_AGAIN|socket|network|aborted|请求失败/i
 
 class StepError extends Error {
   constructor(step, message) {
@@ -44,7 +48,7 @@ async function exploreSample(E, source) {
 
 async function findBook(E, source, explored, r) {
   const keywords = [source.ruleSearch?.checkKeyWord, ...explored.slice(0, 2).map((b) => b.name), ...PROBES]
-    .map((k) => `${k ?? ''}`.trim()).filter((k, i, a) => k && a.indexOf(k) === i).slice(0, 6)
+    .map((k) => `${k ?? ''}`.trim()).filter((k, i, a) => k && a.indexOf(k) === i).slice(0, 4)
   let anyResult = false
   for (const k of keywords) {
     const books = await E.searchBooks(source, k, 1).catch(() => [])
@@ -116,12 +120,43 @@ async function runOnce(E, source, r) {
   r.step = '完成'
 }
 
+const PREFLIGHT_TIMEOUT = 8000
+// 搜书覆盖面：通过检测的书源再搜这几部热门书，能搜到的越多，换源时越用得上
+const COVERAGE_TITLES = ['诡秘之主', '斗破苍穹', '凡人修仙传', '剑来', '十日终焉', '大奉打更人']
+const COVERAGE_TIMEOUT = 60000
+
+async function coverageOf(E, source) {
+  const hits = await withTimeout(Promise.all(COVERAGE_TITLES.map((t) =>
+    E.searchBooks(source, t, 1).then((books) => (relevantHit(books, t) ? 1 : 0)).catch(() => 0))), COVERAGE_TIMEOUT)
+    .catch(() => [])
+  return hits.reduce((a, b) => a + b, 0)
+}
+
+/** 站点是否可连接：收到任何 HTTP 响应（含 4xx/5xx）都算可连接，交给后续步骤判断 */
+async function reachable(source) {
+  const base = `${source.bookSourceUrl ?? ''}`.split('#')[0].trim()
+  if (!/^https?:\/\//i.test(base)) {
+    return true
+  }
+  try {
+    const res = await fetch(base, { redirect: 'manual', signal: AbortSignal.timeout(PREFLIGHT_TIMEOUT) })
+    await res.body?.cancel()
+    return true
+  } catch {
+    return false
+  }
+}
+
 /**
  * 严格检测单个书源
  * @returns { source, brand, ok, explore, latestOk, flaky, chapters, chars, keyword, fingerprint, step, message, ms }
  */
 export async function deepCheck(E, source, brand = '') {
   const start = Date.now()
+  if (!(await reachable(source))) {
+    return { source, brand, ok: false, explore: false, latestOk: false, flaky: false, chapters: 0, chars: 0,
+      keyword: '', fingerprint: '', step: '预检', message: '站点无法访问', latestProblem: '', ms: Date.now() - start }
+  }
   const attempt = async () => {
     const r = { source, brand, ok: false, explore: false, latestOk: false, flaky: false, chapters: 0, chars: 0,
       keyword: '', fingerprint: '', step: '', message: '', latestProblem: '' }
@@ -135,7 +170,7 @@ export async function deepCheck(E, source, brand = '') {
     return r
   }
   let r = await attempt()
-  if (!r.ok) {
+  if (!r.ok && NETWORK_ERROR.test(`${r.step} ${r.message}`)) {
     await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY))
     const second = await attempt()
     if (second.ok) {
@@ -144,5 +179,7 @@ export async function deepCheck(E, source, brand = '') {
     }
   }
   r.ms = Date.now() - start
+  // 覆盖面不计入耗时（速度只反映搜索与阅读本身）
+  r.coverage = r.ok ? await coverageOf(E, source) : 0
   return r
 }

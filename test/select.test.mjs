@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { diffSources, hostOf, publishable, selectSources, updateHistory } from '../checker/select.mjs'
+import { diffSources, excludedSource, hostOf, publishable, recentlyFailed, selectSources, updateHistory } from '../checker/select.mjs'
 
 const src = (url, extra = {}) => ({ bookSourceUrl: url, bookSourceName: url, ...extra })
 const res = (url, o = {}) => ({ source: src(url, o.source), ok: true, explore: true, ms: 1000, brand: '', ...o })
@@ -10,24 +10,47 @@ test('hostOf 去掉 www/m/wap 前缀', () => {
   assert.equal(hostOf('http://www.ABC.com:8080'), 'abc.com')
 })
 
-test('品牌各取 2 个，其余要求发现可用、同站一个、不超过目标数', () => {
+test('品牌各取 2 个，其余同站一个、不超过目标数', () => {
   const results = [
-    res('https://a.fanqie.com', { brand: '番茄', ms: 3000 }),
-    res('https://b.fanqie.com', { brand: '番茄', ms: 1000 }),
-    res('https://c.fanqie.com', { brand: '番茄', ms: 500 }),
+    res('https://a.fanqie.com', { brand: '番茄', ms: 3000, explore: false }),
+    res('https://b.fanqie.com', { brand: '番茄', ms: 1000, explore: false }),
+    res('https://c.fanqie.com', { brand: '番茄', ms: 500, explore: false }),
     res('https://x.com/1'),
     res('https://www.x.com/2'),
-    res('https://y.com', { explore: false }),
     res('https://z.com', { ok: false }),
-    res('https://w.com'),
-    res('https://v.com')
+    res('https://w.com')
   ]
-  const picked = selectSources(results, { target: 4, brands: ['番茄'], history: {}, prevUrls: new Set() })
-  const urls = picked.map((r) => r.source.bookSourceUrl)
-  assert.deepEqual(urls.slice(0, 2), ['https://c.fanqie.com', 'https://b.fanqie.com'])
+  const urls = selectSources(results, { target: 4, brands: ['番茄'], history: {}, prevUrls: new Set() })
+    .map((r) => r.source.bookSourceUrl)
   assert.equal(urls.length, 4)
-  assert.ok(!urls.includes('https://y.com') && !urls.includes('https://z.com'))
+  assert.equal(urls.filter((u) => u.includes('fanqie')).length, 2)
+  assert.ok(urls.includes('https://c.fanqie.com') && urls.includes('https://b.fanqie.com'))
+  assert.ok(!urls.includes('https://z.com'))
   assert.equal(urls.filter((u) => hostOf(u) === 'x.com').length, 1)
+})
+
+test('分层：发现可用的前 5 个为精选（品牌优先）排在最前，其余进换源池，发现不是必须', () => {
+  const results = [
+    ...['a', 'b', 'c', 'd', 'e', 'f'].map((h, i) => res(`https://${h}.com`, { ms: 1000 * (i + 1) })),
+    res('https://qimao.com', { brand: '七猫', ms: 9000 }),
+    res('https://nofind.com', { explore: false, ms: 100, coverage: 6 })
+  ]
+  const picked = selectSources(results, { target: 50, brands: ['七猫'], history: {}, prevUrls: new Set() })
+  const featured = picked.filter((r) => r.tier === 'featured')
+  assert.equal(featured.length, 5)
+  assert.equal(featured[0].source.bookSourceUrl, 'https://qimao.com', '品牌优先进精选')
+  assert.deepEqual(picked.slice(0, 5).map((r) => r.tier), Array(5).fill('featured'), '精选排在最前')
+  assert.ok(picked.some((r) => r.source.bookSourceUrl === 'https://nofind.com' && r.tier === 'pool'), '无发现也能进换源池')
+  assert.equal(picked.length, 8)
+})
+
+test('换源池按搜书覆盖面优先', () => {
+  const results = [
+    res('https://narrow.com', { explore: false, ms: 500, coverage: 1 }),
+    res('https://wide.com', { explore: false, ms: 5000, coverage: 6 })
+  ]
+  const picked = selectSources(results, { target: 1, brands: [], history: {}, prevUrls: new Set() })
+  assert.equal(picked[0].source.bookSourceUrl, 'https://wide.com')
 })
 
 test('上一版已发布且连续可用的书源优先于更快的新书源', () => {
@@ -60,8 +83,36 @@ test('变更清单标出新增、移除与 JS 变化', () => {
 })
 
 test('安全门', () => {
-  assert.notEqual(publishable(19, 0), '')
-  assert.equal(publishable(20, 0), '')
+  assert.notEqual(publishable(4, 0), '')
+  assert.equal(publishable(5, 0), '')
   assert.notEqual(publishable(20, 50), '')
-  assert.equal(publishable(30, 50), '')
+  assert.equal(publishable(25, 50), '')
+})
+
+test('成人 / 同人向书源过滤', () => {
+  assert.ok(excludedSource({ bookSourceName: '肉文屋' }))
+  assert.ok(excludedSource({ bookSourceName: '七猫四合一本地版（同人）' }))
+  assert.ok(excludedSource({ bookSourceName: '某站', bookSourceGroup: '🔞' }))
+  assert.ok(excludedSource({ bookSourceName: '海棠文学城' }))
+  assert.ok(!excludedSource({ bookSourceName: '番茄小说', bookSourceGroup: '官方,小说' }))
+})
+
+test('7 天内失败过且未成功的跳过', () => {
+  const now = 100 * 86400000
+  const h = {
+    a: { streak: 0, fails: 2, lastSeen: now - 86400000 },
+    b: { streak: 0, fails: 1, lastSeen: now - 8 * 86400000 },
+    c: { streak: 3, fails: 0, lastSeen: now - 86400000 }
+  }
+  assert.ok(recentlyFailed(h, 'a', now))
+  assert.ok(!recentlyFailed(h, 'b', now))
+  assert.ok(!recentlyFailed(h, 'c', now))
+  assert.ok(!recentlyFailed(h, 'none', now))
+})
+
+test('同一书源地址的多个版本只留得分最高的', () => {
+  const r = (name, o) => ({ source: { bookSourceUrl: 'https://api.qimao.com', bookSourceName: name }, ok: true, explore: false, latestOk: true, ms: 5000, brand: '七猫', ...o })
+  const picked = selectSources([r('慢版', { ms: 50000 }), r('快版', { ms: 2000 }), r('坏版', { ok: false })],
+    { target: 10, brands: ['七猫'], history: {}, prevUrls: new Set() })
+  assert.deepEqual(picked.map((p) => p.source.bookSourceName), ['快版'])
 })

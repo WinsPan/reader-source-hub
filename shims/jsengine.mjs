@@ -18,7 +18,7 @@ async function acquire() {
   const rt = (await newQuickJSAsyncWASMModule()).newRuntime()
   rt.setMemoryLimit(MEMORY_LIMIT)
   rt.setMaxStackSize(4 * 1024 * 1024)
-  const slot = { rt, deadline: 0 }
+  const slot = { rt, deadline: 0, host: null, contexts: new Map() }
   rt.setInterruptHandler(() => Date.now() > slot.deadline)
   return slot
 }
@@ -34,42 +34,75 @@ function errorText(vm, handle) {
   return `${e.message ?? JSON.stringify(e)}${at ? ` (${at.trim()})` : ''}`
 }
 
+// 与客户端一致：已执行过 prelude（含书源 jsLib）的上下文按 prelude 缓存复用，免去每次重新编译
+const CONTEXT_CACHE_MAX = 4
+
+function contextFor(slot, prelude) {
+  let entry = slot.contexts.get(prelude)
+  if (entry) {
+    slot.contexts.delete(prelude)
+    slot.contexts.set(prelude, entry)
+    return entry
+  }
+  const vm = slot.rt.newContext()
+  // 宿主函数按当前调用分派（同一上下文会被不同的 evaluate 复用）
+  const hostFn = vm.newAsyncifiedFunction('__host', async (m, a) => {
+    const method = vm.getString(m)
+    const args = vm.getString(a)
+    try {
+      const r = await slot.host(method, args)
+      return vm.newString(r === undefined || r === null ? '' : `${r}`)
+    } catch (e) {
+      return { error: vm.newError(`${e?.message ?? e}`) }
+    }
+  })
+  vm.setProp(vm.global, '__host', hostFn)
+  hostFn.dispose()
+  entry = { vm, ready: false }
+  slot.contexts.set(prelude, entry)
+  if (slot.contexts.size > CONTEXT_CACHE_MAX) {
+    const [oldKey, old] = slot.contexts.entries().next().value
+    slot.contexts.delete(oldKey)
+    old.vm.dispose()
+  }
+  return entry
+}
+
+function dropContext(slot, prelude) {
+  const entry = slot.contexts.get(prelude)
+  if (entry) {
+    slot.contexts.delete(prelude)
+    entry.vm.dispose()
+  }
+}
+
 export async function evaluate(prelude, script, bindings, host) {
   const slot = await acquire()
   slot.deadline = Date.now() + SCRIPT_TIMEOUT_MS
-  const vm = slot.rt.newContext()
+  slot.host = host
+  const entry = contextFor(slot, prelude)
+  const vm = entry.vm
+  const run = async (code) => {
+    const r = await vm.evalCodeAsync(code)
+    if (r.error) {
+      throw new Error(errorText(vm, r.error))
+    }
+    return r.value
+  }
+  const call = (name, arg) => {
+    const fn = vm.getProp(vm.global, name)
+    const r = vm.callFunction(fn, vm.undefined, arg)
+    fn.dispose()
+    if (r.error) {
+      throw new Error(errorText(vm, r.error))
+    }
+    return r.value
+  }
   try {
-    const hostFn = vm.newAsyncifiedFunction('__host', async (m, a) => {
-      const method = vm.getString(m)
-      const args = vm.getString(a)
-      try {
-        const r = await host(method, args)
-        return vm.newString(r === undefined || r === null ? '' : `${r}`)
-      } catch (e) {
-        return { error: vm.newError(`${e?.message ?? e}`) }
-      }
-    })
-    vm.setProp(vm.global, '__host', hostFn)
-    hostFn.dispose()
-
-    const run = async (code) => {
-      const r = await vm.evalCodeAsync(code)
-      if (r.error) {
-        throw new Error(errorText(vm, r.error))
-      }
-      return r.value
+    if (!entry.ready) {
+      ;(await run(prelude)).dispose()
+      entry.ready = true
     }
-    const call = (name, arg) => {
-      const fn = vm.getProp(vm.global, name)
-      const r = vm.callFunction(fn, vm.undefined, arg)
-      fn.dispose()
-      if (r.error) {
-        throw new Error(errorText(vm, r.error))
-      }
-      return r.value
-    }
-
-    ;(await run(prelude)).dispose()
     const b = vm.newString(bindings)
     call('__init', b).dispose()
     b.dispose()
@@ -79,8 +112,14 @@ export async function evaluate(prelude, script, bindings, host) {
     const text = vm.getString(out)
     out.dispose()
     return text
+  } catch (e) {
+    // 超时或内存超限后上下文状态不可信，丢弃
+    if (!entry.ready || /interrupted|out of memory/i.test(e.message)) {
+      dropContext(slot, prelude)
+    }
+    throw e
   } finally {
-    vm.dispose()
+    slot.host = null
     idle.push(slot)
   }
 }

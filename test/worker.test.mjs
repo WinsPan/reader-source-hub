@@ -43,3 +43,13 @@ test('拒绝空书源', async () => {
   const e = env()
   assert.equal((await publish(e, 'u-secret', { sources: [], manifest: { version: 1 } })).status, 400)
 })
+
+test('只保存历史：不影响当前书源', async () => {
+  const e = env()
+  await publish(e, 'u-secret', { sources: [{ a: 1 }], manifest: { version: 1 }, history: {} })
+  const r = await worker.fetch(req('/admin/history', { method: 'POST', headers: { authorization: 'Bearer u-secret' }, body: JSON.stringify({ history: { x: { streak: 0 } } }) }), e)
+  assert.equal(r.status, 200)
+  assert.deepEqual(await (await worker.fetch(req('/s/r-secret/history.json'), e)).json(), { x: { streak: 0 } })
+  assert.deepEqual(await (await worker.fetch(req('/s/r-secret/sources.json'), e)).json(), [{ a: 1 }])
+  assert.equal((await worker.fetch(req('/admin/history', { method: 'POST', headers: { authorization: 'Bearer bad' }, body: '{}' }), e)).status, 404)
+})

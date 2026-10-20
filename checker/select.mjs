@@ -9,9 +9,13 @@ export function hostOf(url) {
   return m ? m[1].toLowerCase().replace(/^(www|m|wap)\./, '') : `${url ?? ''}`
 }
 
+export const FEATURED_COUNT = 5
+// 搜书覆盖面：deep.mjs 用这几部热门书检测能搜到几部
+export const COVERAGE_MAX = 6
+
 /**
- * 打分（满分 1）：
- *  连续可用天数 0.35（封顶 7 天）+ 上一版已发布 0.15 + 最新章可读 0.15 + 发现可用 0.1 + 速度 0.25
+ * 打分（满分 1），侧重「搜书与换源」：
+ *  搜书覆盖面 0.35 + 连续可用天数 0.25（封顶 7 天）+ 速度 0.2 + 最新章可读 0.1 + 上一版已发布 0.1
  *  失败复检后才通过（不稳定）扣 0.15
  * 上一版的书源只要仍可用就优先保留，避免每天大换血
  */
@@ -19,43 +23,84 @@ export function scoreOf(r, history, prevUrls) {
   const url = r.source.bookSourceUrl
   const streak = Math.min(history[url]?.streak ?? 0, STREAK_CAP)
   const speed = 1 - Math.min(r.ms, 60000) / 60000
-  return (streak / STREAK_CAP) * 0.35 + (prevUrls.has(url) ? 0.15 : 0) + (r.latestOk ? 0.15 : 0) +
-    (r.explore ? 0.1 : 0) + speed * 0.25 - (r.flaky ? 0.15 : 0)
+  const coverage = Math.min(r.coverage ?? 0, COVERAGE_MAX) / COVERAGE_MAX
+  return coverage * 0.35 + (streak / STREAK_CAP) * 0.25 + speed * 0.2 + (r.latestOk ? 0.1 : 0) +
+    (prevUrls.has(url) ? 0.1 : 0) - (r.flaky ? 0.15 : 0)
+}
+
+// 成人 / 同人向书源不入选（按书源名称与分组判断）
+const EXCLUDED = /🔞|肉|腐|耽美|同人|成人|18禁|情色|黄文|里番|海棠|BL|GL|百合|NTR/i
+
+export function excludedSource(source) {
+  return EXCLUDED.test(`${source?.bookSourceName ?? ''} ${source?.bookSourceGroup ?? ''}`)
+}
+
+/** 7 天内检测失败过、且没有成功过的书源跳过，把时间留给新候选 */
+export function recentlyFailed(history, url, now) {
+  const h = history[url]
+  return !!h && h.streak === 0 && (h.fails ?? 0) > 0 && now - (h.lastSeen ?? 0) < 7 * 86400000
 }
 
 /**
- * 选出最终书源：品牌各取 BRAND_QUOTA 个（发现可用优先，再按得分），
- * 其余只取发现可用的，按得分补足到 target；同站只留一个，正文指纹相同（同一后端的镜像站）也只留一个
- * @param results [{ source, ok, explore, latestOk, flaky, fingerprint, ms, brand }]
+ * 选出最终书源，分两层（结果按层排序，r.tier 标出所在层）：
+ *  1. 精选（featured）：发现、搜索、阅读全都可用的前 FEATURED_COUNT 个，品牌优先 —— 用于发现页浏览；
+ *  2. 换源池（pool）：只要求搜索与阅读，按搜书覆盖面等得分补足到 target —— 用于搜书与阅读时换源。
+ * 七猫 / 番茄 / 猫眼各保留 BRAND_QUOTA 个（有发现页的进精选）；
+ * 同书源地址、同站、正文指纹相同（同一后端的镜像站）只留一个；成人 / 同人向不入选
+ * @param results [{ source, ok, explore, latestOk, flaky, fingerprint, coverage, ms, brand }]
  */
 export function selectSources(results, { target, brands, history, prevUrls }) {
   const score = (r) => scoreOf(r, history, prevUrls)
-  const ok = results.filter((r) => r.ok)
-    .sort((a, b) => (a.explore === b.explore ? score(b) - score(a) : (a.explore ? -1 : 1)))
+  const ok = results.filter((r) => r.ok && !excludedSource(r.source)).sort((a, b) => score(b) - score(a))
   const picked = []
   const hosts = new Set()
   const prints = new Set()
-  const pick = (r) => {
-    picked.push(r)
+  const urls = new Set()
+  const taken = (r) => urls.has(r.source.bookSourceUrl) || hosts.has(hostOf(r.source.bookSourceUrl)) ||
+    (!!r.fingerprint && prints.has(r.fingerprint))
+  const pick = (r, tier) => {
+    if (taken(r) || picked.length >= target) {
+      return false
+    }
+    urls.add(r.source.bookSourceUrl)
     hosts.add(hostOf(r.source.bookSourceUrl))
     if (r.fingerprint) {
       prints.add(r.fingerprint)
     }
+    r.tier = tier
+    picked.push(r)
+    return true
   }
+  // 1. 精选：有发现页的，品牌在前
+  const full = ok.filter((r) => r.explore)
+  for (const r of [...full.filter((x) => x.brand), ...full.filter((x) => !x.brand)]) {
+    if (picked.length >= FEATURED_COUNT) {
+      break
+    }
+    pick(r, 'featured')
+  }
+  // 2. 品牌名额：精选里已有的计入，不足的从换源池补
   for (const brand of brands) {
-    ok.filter((r) => r.brand === brand).slice(0, BRAND_QUOTA).forEach(pick)
+    let count = picked.filter((r) => r.brand === brand).length
+    for (const r of ok.filter((x) => x.brand === brand)) {
+      if (count >= BRAND_QUOTA) {
+        break
+      }
+      if (pick(r, 'pool')) {
+        count++
+      }
+    }
   }
+  // 3. 换源池：其余按得分补足
   for (const r of ok) {
     if (picked.length >= target) {
       break
     }
-    if (r.brand || !r.explore || hosts.has(hostOf(r.source.bookSourceUrl)) ||
-      (r.fingerprint && prints.has(r.fingerprint))) {
-      continue
+    if (!r.brand) {
+      pick(r, 'pool')
     }
-    pick(r)
   }
-  return picked
+  return [...picked.filter((r) => r.tier === 'featured'), ...picked.filter((r) => r.tier === 'pool')]
 }
 
 /** 更新历史：可用则连续天数 +1，失败清零；30 天未出现的条目删除 */
@@ -106,9 +151,9 @@ export function diffSources(prev, next) {
   }
 }
 
-export const MIN_PUBLISH = 20
+export const MIN_PUBLISH = 5
 
-/** 安全门：入选不足 20 个（多半是网络问题或候选太少）时不发布，保留上一版 */
+/** 安全门：入选不足 5 个，或不到上一版的一半（多半是网络问题）时不发布，保留上一版 */
 export function publishable(selectedCount, prevCount) {
   if (selectedCount < MIN_PUBLISH) {
     return `入选书源只有 ${selectedCount} 个（少于 ${MIN_PUBLISH}）`

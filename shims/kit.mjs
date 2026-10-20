@@ -21,6 +21,11 @@ export const http = {
         })
         const header = {}
         res.headers.forEach((v, k) => { header[k] = v })
+        // 与系统网络栈一致：Set-Cookie 以数组给出
+        const setCookies = res.headers.getSetCookie?.() ?? []
+        if (setCookies.length > 0) {
+          header['set-cookie'] = setCookies
+        }
         return { responseCode: res.status, header, result: await res.arrayBuffer() }
       },
       destroy() {}

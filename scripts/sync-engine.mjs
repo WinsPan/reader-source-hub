@@ -21,7 +21,7 @@ const shimPlugin = {
 await build({
   stdin: {
     contents: `
-      export { checkSource, CheckResult, BRANDS } from './common/utils/SourceCurator'
+      export { BRANDS } from './common/constants/SourceBrands'
       export { searchRepoSources, searchRepoBoth, rankRepoSources, fetchRepoSource } from './common/utils/SourceRepo'
       export { SourceImporter } from './common/utils/SourceImporter'
       export { searchBooks, parseExploreUrl, exploreBooks } from './common/utils/OnlineBookSource'

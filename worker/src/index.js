@@ -2,6 +2,7 @@
 //   GET  /s/<READ_TOKEN>/sources.json | manifest.json | history.json
 //   POST /admin/publish   Authorization: Bearer <UPLOAD_TOKEN>   body: { sources, manifest, history }
 //   POST /admin/rollback  Authorization: Bearer <UPLOAD_TOKEN>   用上一版覆盖当前版本
+//   POST /admin/history   Authorization: Bearer <UPLOAD_TOKEN>   body: { history }  只更新检测历史（本次未发布时）
 // 存储：KV 命名空间 STORE，键 cur:<文件名> 与 prev:<文件名>
 
 const FILES = ['sources.json', 'manifest.json', 'history.json']
@@ -79,6 +80,14 @@ export default {
       }
       if (parts[1] === 'rollback') {
         return rollback(env)
+      }
+      if (parts[1] === 'history') {
+        const body = await request.json().catch(() => null)
+        if (!body || typeof body.history !== 'object') {
+          return json({ error: 'history missing' }, 400)
+        }
+        await env.STORE.put('cur:history.json', JSON.stringify(body.history))
+        return json({ ok: true })
       }
       return notFound()
     }

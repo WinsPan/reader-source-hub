@@ -51,5 +51,6 @@ test('正文指纹相同的镜像站只留一个；不稳定的排在稳定的�
     r('https://c.com', { fingerprint: 'y', flaky: true }),
     r('https://d.com', { fingerprint: 'z' })
   ], { target: 10, brands: [], history: {}, prevUrls: new Set() }).map((p) => p.source.bookSourceUrl)
-  assert.deepEqual(picked, ['https://a.com', 'https://d.com', 'https://c.com'])
+  assert.deepEqual(picked.slice().sort(), ['https://a.com', 'https://c.com', 'https://d.com'])
+  assert.equal(picked[picked.length - 1], 'https://c.com')
 })
